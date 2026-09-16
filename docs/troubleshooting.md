@@ -41,11 +41,20 @@
 
 ### 1. 증상 (Symptom)
 * 실습 전용 IAM 계정(`codyssey-b3-user`)으로 AWS 웹 콘솔에 로그인한 뒤 VPC 메뉴로 이동하자, 화면 상단에 붉은색 경고 배너와 함께 다수의 API 호출 실패 오류가 연달아 발생함.
+* DescribeDhcpOptions에서 Dhcp란?
+  - Dynamic : 동적으로 (그때그때 알아서)
+  - Host : 컴퓨터(호스트)에게
+  - Configuration : 네트워크 설정값과 IP를
+  - Protocol : 나누어주는 규칙(프로토콜)
+  - DescribeDhcpOptions: "이 VPC에서 컴퓨터들에게 IP를 나눠줄 때 도메인 이름이나 DNS 서버 설정을 어떻게 주기로 정해놨는지 목록 좀 보여줘!"
+  - DNS 서버 설정이란 쉽게 말해 google.com을 입력했을 때, 중간에서 "아! google.com의 진짜 컴퓨터 IP 번호는 142.250.206.46이야!" 하고 알려주는 통역사 역할
 * **오류 메시지**:
   1. `다음 작업을 수행하지 못함: DescribeDhcpOptions`  
      (`User: arn:aws:iam::388094502979:user/codyssey-b3-user is not authorized to perform: ec2:DescribeDhcpOptions because no identity-based policy allows the ec2:DescribeDhcpOptions action`)
   2. `리소스를 로드하는 중 오류가 발생했습니다: ec2:DescribeNatGateways`
+  - NAT Gateway: VPC 내의 private subnet에 있는 서버가 인터넷으로 나갈 때, 이 NAT Gateway를 통해서 나가게 되는데, 이 NAT Gateway의 상태를 조회하는 권한이 없음.
   3. `VPC(vpc-039bf298cd5b870a5)를 로드하는 동안 오류가 발생했습니다: ec2:DescribeNetworkAcls`
+  - Network ACL: VPC 내의 서브넷에 대한 방화벽 규칙이라고 보면 됨. 이 서브넷의 네트워크 ACL을 조회하는 권한이 없음.
 
 #### 📸 증상 스크린샷
 * **(1) VPC 목록 접속 시 DescribeDhcpOptions 오류 발생**
@@ -58,6 +67,7 @@
 > * 네이버나 쇼핑몰에 들어가면 웹 브라우저가 화면을 그리기 위해 서버에서 상품 목록, 광고 배너, 프로필 사진 등을 한 번에 긁어오는 것처럼, AWS 콘솔도 화면을 그리기 위해 뒤에서 수십 가지 정보를 AWS 서버에 물어봅니다.
 > * 그중 하나가 "이 VPC의 DHCP(네트워크 자동 IP 할당 설정) 옵션은 뭐야?"라고 물어보는 `DescribeDhcpOptions`입니다.
 > * 그런데 우리 IAM 계정에는 이 단순 질문 권한이 없어서, AWS 웹사이트가 화면 일부분을 그리지 못하고 "나 이거 못 읽어왔어!"라며 빨간 에러를 뿜었던 것입니다.
+> * 요약하면 필요한 권한을 준건데, 화면내에 콘솔이 보기좋게 보여주기 위해서 필요한 권한들이 누락되었던 것입니다.
 
 ---
 
@@ -99,9 +109,6 @@
 > * 프로그래밍에서 별표(`*`)는 **"아무 글자나 다 된다"는 와일드카드(Wildcard)**입니다.
 > * `ec2:DescribeVpcs`, `ec2:DescribeSubnets`, `ec2:DescribeDhcpOptions`, `ec2:DescribeNatGateways` 등등 'Describe'로 시작하는 수백 개의 복잡한 조회 명령어들을 하나하나 적을 필요 없이, `ec2:Describe*` 딱 한 줄로 전부 허용해 준 것입니다!
 
-* **시니어 엔지니어링 설계 포인트**:
-  * 생성/삭제/실행(`Create*`, `Delete*`, `RunInstances`) 권한은 아래 구문에서 철저히 핀포인트로 통제 유지.
-  * 읽기 권한만 시원하게 열어주는 **"조회와 쓰기의 권한 분리(Separation of Read/Write Permissions)"** 모범 사례를 적용.
 
 ---
 
@@ -140,13 +147,12 @@
 > * 만약 웹 서버가 내 요청을 확인하고 "너 접근 권한 없어!"라고 거절했다면 `403 Forbidden`이나 `Connection Refused` 에러가 뜹니다. (즉각 거절 답장이라도 옴)
 > * 하지만 `TIMED_OUT`(시간 초과)은 **"내가 서버를 향해 편지(패킷)를 보냈는데, 중간 경비원(방화벽)이 편지를 묵묵히 쓰레기통에 버려버려서 영영 답장을 못 받고 하염없이 기다리다 지쳐 쓰러진 상태"**입니다.
 > * 클라우드 웹 배포에서 타임아웃이 떴다면? 십중팔구 **"방화벽(보안 그룹)이 문을 꼭 닫아두고 패킷을 묵묵부답으로 버리고 있다"**는 뜻입니다!
-
+> * 요약 설명: 그냥 외부에서 들어오는 포트를 http가 아니라 https로 해서 생긴 문제: (SSL 인증서 부재): 네이버나 구글 같은 사이트는 서버에 SSL 보안 인증서를 설치해 둬서 443번 암호화 통신을 처리할 수 있습니다. 하지만 우리 EC2의 Nginx는 인증서가 없는 순수 일반 웹 서버라 오직 80번(HTTP) 문에서만 손님을 기다리도록(listen 80;) 만들어져 있었습니다. 443번 문 뒤에는 손님을 맞이할 Nginx 프로그램 자체가 없었던 것입니다.
 ---
 
 ### 2. 가설 수립 (Hypothesis)
-* **가설 1 (웹 접속 실패 원인)**: Nginx는 80번 포트(HTTP)로 요청을 수신 대기 중인데, 보안 그룹 인바운드 규칙 설정 시 실수로 `HTTP(80)` 대신 `HTTPS(443)`를 등록하여 AWS 네트워크 방화벽(Security Group)이 외부에서 들어오는 80번 포트 패킷을 차단(Drop)하고 있을 것이다.
-* **가설 2 (보안 그룹 수정 실패 원인)**: 최초 IAM 정책에는 구형 EC2 API인 `AuthorizeSecurityGroupIngress`, `RevokeSecurityGroupIngress`만 정의되어 있으나, 최신 AWS 콘솔의 "규칙 일괄 편집" 인터페이스는 내부적으로 `ec2:ModifySecurityGroupRules` API를 호출하기 때문에 권한 거부(Deny)가 발생했을 것이다.
-* **가설 3 (보안 그룹 교체 실패 원인)**: EC2 인스턴스에 적용된 보안 그룹을 변경하는 작업은 인스턴스 자체가 아니라 가상 네트워크 카드인 **ENI(Elastic Network Interface)**의 속성을 변경하는 `ec2:ModifyNetworkInterfaceAttribute` API를 호출하므로, 이 권한이 없어 보안 그룹 교체가 막혔을 것이다.
+* **가설 (웹 접속 실패 원인)**: Nginx는 80번 포트(HTTP)로 요청을 수신 대기 중인데, 보안 그룹 인바운드 규칙 설정 시 실수로 `HTTP(80)` 대신 `HTTPS(443)`를 등록하여 AWS 네트워크 방화벽(Security Group)이 외부에서 들어오는 80번 포트 패킷을 차단(Drop)하고 있을 것이다.
+
 
 > 💡 **3개월 차 눈높이 해설: 80번 포트와 443번 포트는 왜 다르고, 왜 문제가 되었을까요?**
 > * **HTTP (80번 포트)**: 평문 일반 웹 통신 (자물쇠 없는 기본 통신).
@@ -181,6 +187,13 @@
 1. **IAM 정책 업데이트 (2차 수정)**:
    * `"ec2:*SecurityGroup*"` : `CreateSecurityGroup`, `ModifySecurityGroupRules`, `AuthorizeSecurityGroupIngress` 등 보안 그룹 관련 모든 작업 포괄 허용.
    * `"ec2:*NetworkInterface*"` : 인스턴스 ENI에 보안 그룹을 연결/해제하는 `ModifyNetworkInterfaceAttribute` 및 `DescribeNetworkInterfaces` 허용.
+   - CreateSecurityGroup: 새 방화벽(보안 그룹) 생성하기
+   - DeleteSecurityGroup: 다 쓴 방화벽 삭제하기
+   - AuthorizeSecurityGroupIngress: 80번이나 22번 포트 문 열어주기
+   - ModifySecurityGroupRules: (가장 중요) AWS 콘솔에서 인바운드 규칙을 표 형태로 한 번에 수정하고 저장하기
+   - DescribeNetworkInterfaces: 컴퓨터에 꽂힌 랜카드와 IP 주소 목록 조회하기
+   - ModifyNetworkInterfaceAttribute: (가장 중요!) 랜카드의 설정값을 바꾸는 권한
+   - AWS 구조상 보안 그룹(방화벽)은 EC2 컴퓨터 본체가 아니라, 컴퓨터에 꽂혀 있는 '가상 랜카드(ENI)'에 장착됩니다.우리가 콘솔에서 EC2를 누르고 **[보안 그룹 변경]**을 누르는 행위는, 실제로는 **"이 랜카드에 연결되어 있는 방화벽 목록(속성, Attribute)을 새 방화벽으로 교체해라!"**라는 작업입니다.
 
 ```json
 // 2차 수정으로 보강된 VPC/네트워크 관리 구문 (발췌)
